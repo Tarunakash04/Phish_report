@@ -1,103 +1,77 @@
-# 🚀 Log Summary & Analysis Tool
+# 📄 Excel Summarizer & PhishMapper
 
-This is a production-ready AI-powered tool for summarizing and comparing tabular logs across multiple files (Excel, CSV, PDF). Designed for fast local use, it supports both **file uploads** and **entire folders (ZIPs)** and outputs intelligent summaries along with downloadable Excel reports.
-
-## 🔍 Key Features
-
-- 🧠 **AI-Based Summary** using FLAN-T5  
-- 🧾 Handles **Excel, CSV, PDF** formats  
-- 📂 Accepts **ZIP folders** with multiple logs  
-- 🧮 Smart grouping of **primary + secondary columns**  
-- 🎨 Color-coded groups with **legend support**  
-- 📊 Generates **comparison tables across files**  
-- 📥 One-click **Excel export** with multiple sheets  
-- ⚙️ Built using **Flask**, **Transformers**, **Pandas**
-
-## 📸 Screenshots
-
-### 🗂 Upload & File Parsing  
-![Upload](static/Upload_page.png)
-
-### 🧠 Drag and Drop
-![Drag Drop](static/Drag_drop.png)
-
-## 🏗 Tech Stack
-
-| Layer         | Tools/Packages                                                                 |
-|---------------|----------------------------------------------------------------------------------|
-| Frontend      | HTML, CSS (custom), Flask Templates                                             |
-| Backend       | Flask, Pandas, XlsxWriter, pdfplumber                                           |
-| AI/NLP        | HuggingFace Transformers, FLAN-T5, SentenceTransformers                         |
-| File Support  | `.xlsx`, `.xls`, `.csv`, `.pdf`, `.zip`                                         |
-| Export Format | `.xlsx` with multiple sheets                                                    |
-
-## ⚙️ Setup Instructions
-
-### 🔧 1. Install Dependencies
-
-```bash
-pip install -r requirements.txt
-
-### 📁 2. Folder Structure
-
-project/
-├── app.py
-├── templates/
-├── static/
-│   ├── styles.css
-│   ├── demo_upload.png
-│   ├── demo_columns.png
-│   ├── demo_summary.png
-│   └── demo_excel.png
-├── uploads/
-├── requirements.txt
-├── README.md
-
-
-## 🚀 3. Run the App
-
-```bash
-python app.py
-```
-
-Visit [http://127.0.0.1:5000](http://127.0.0.1:5000) in your browser.
+Welcome to **Excel Summarizer**, now enhanced as a phishing campaign analysis and mapping tool ("PhishMapper")!  
+This Flask-based app automates your manual process of merging phishing simulation results with employee master data, and generates clean Excel reports.
 
 ---
 
-## 📥 Excel Export Details
+## 🚀 Features
 
-When you click **Download**, the Excel file will contain:
-
-- **Sheet 1**: `Supporting Summary Table`
-- **Sheet 2**: `Comparison Across Files`
-- **Sheet 3+**: Raw data from each uploaded file  
-  *(Each sheet is named after the original filename)*
-
----
-
-## 🧠 AI Model Info
-
-- 🔍 **Model Used**: `google/flan-t5-large`
-- 🔗 Powered by **Hugging Face Transformers**
-- 🧠 Embedded logic for summarizing patterns, relationships, and grouping insights
+✅ Upload employee master sheet (Name, Email, Team, Designation, etc.)  
+✅ Upload phishing result sheet (Name, Action columns — Clicked, Opened, Ignored, etc.)  
+✅ Auto-map by Name and merge extra details  
+✅ Generate a fully formatted Excel summary report  
+✅ Download final merged file in seconds  
+✅ Clean Flask web UI with step-wise uploads
 
 ---
 
-## 🧹 Reset / Cleanup
+## 🏗️ How it works
 
-To reset session and delete uploaded files:
+### 1️⃣ Upload Master Sheet
 
-[http://127.0.0.1:5000/reset](http://127.0.0.1:5000/reset)
-
----
-
-## 🤝 Contributing
-
-Open to suggestions and pull requests.  
-This tool was built to assist in internal **audit and QA log analysis**, but can be adapted for any structured tabular summarization use case.
+- Contains official employee data.
+- Supported formats: `.xlsx`, `.xls`, `.csv`.
 
 ---
 
-## 📃 License
+### 2️⃣ Upload Phishing Result Sheet
 
-MIT License — free to use, distribute, and modify.
+- Contains campaign results.
+- Must include at least **Name** and **Action** columns.
+- Supported formats: `.xlsx`, `.xls`, `.csv`.
+
+---
+
+### 3️⃣ Auto Mapping
+
+- The system matches **Name** between the two sheets.
+- Appends columns like Email, Team, Designation to each phishing record.
+
+---
+
+### 4️⃣ Download
+
+- Generates a new Excel file with all merged columns.
+- Ready for further analysis or direct reporting.
+
+---
+
+## 🌐 Usage
+
+1. Open your browser and go to: `http://127.0.0.1:5000`
+2. Upload your **Employee Master Sheet** first.
+3. Upload your **Phishing Result Sheet** next.
+4. View merged summary instantly.
+5. Click **Download Excel** to save your report.
+
+---
+
+## 🛡️ Security
+
+- All processing runs locally.
+- No data leaves your system.
+- Uploaded files and sessions cleared after reset.
+
+---
+
+## 💡 Example use case
+
+> You split 24,000 employees into 3 waves of 8,000 each. You send phishing emails monthly to different groups, rotating every quarter. After each campaign, upload the result sheet, and get an auto-generated merged report — with details like Designation, Team, Manager — all in one file. Quick, consistent, and no manual VLOOKUP nightmares.
+
+---
+
+## 📝 License
+
+MIT License.  
+See `License` file for full details.
