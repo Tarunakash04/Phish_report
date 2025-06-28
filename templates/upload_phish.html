@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Upload Phishing Results</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+    <div class="container">
+        <h1>PhishMapper</h1>
+        <h3>Step 2: Upload Phishing Results</h3>
+        <form action="/upload_phish" method="POST" enctype="multipart/form-data">
+            <input type="file" name="phishing_file" accept=".xlsx,.xls,.csv" required>
+            <button type="submit">Upload & Analyze</button>
+        </form>
+    </div>
+</body>
+</html>
