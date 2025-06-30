@@ -65,14 +65,14 @@ def upload_phish():
         phish_df = parse_file(phishing_file)
         phish_df.columns = [str(c).strip().lower() for c in phish_df.columns]
 
-        # Use 'name' as the common column
-        name_col_phish = next((col for col in phish_df.columns if 'name' in col), None)
-        name_col_emp = next((col for col in emp_df.columns if 'name' in col), None)
+        # Use 'email' as the common column
+        email_col_phish = next((col for col in phish_df.columns if 'name' in col), None)
+        email_col_emp = next((col for col in emp_df.columns if 'name' in col), None)
 
-        if not name_col_phish or not name_col_emp:
-            return "❌ Name column not found in one or both files.", 400
+        if not email_col_phish or not email_col_emp:
+            return "❌ email column not found in one or both files.", 400
 
-        merged_df = phish_df.merge(emp_df, left_on=name_col_phish, right_on=name_col_emp, how='left')
+        merged_df = phish_df.merge(emp_df, left_on=email_col_phish, right_on=email_col_emp, how='left')
 
         unmatched_df = merged_df[merged_df[emp_df.columns[0]].isna()]
 
@@ -89,7 +89,7 @@ def upload_phish():
         session['summary'] = summary.to_json()
 
         return render_template("summary.html",
-                               target=name_col_phish,
+                               target=email_col_phish,
                                supporting_table_html=summary.to_html(index=False, classes="summary-table"),
                                comparison_table_html=None,
                                model_summary_text=None)
