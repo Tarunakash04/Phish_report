@@ -23,90 +23,85 @@ def parse_file(file_storage):
     elif filename.endswith('.csv'):
         df = pd.read_csv(save_path)
     else:
-        raise ValueError("Unsupported file type")
+        raise ValueError("Unsupported file format.")
     return df
 
 @app.route('/', methods=['GET', 'POST'])
 def index():
     if request.method == 'POST':
         master_file = request.files['master_file']
-        if not master_file:
-            return "Master file missing.", 400
-
         master_df = parse_file(master_file)
-        master_df.columns = [c.strip() for c in master_df.columns]
+        master_df.columns = [str(c).strip() for c in master_df.columns]
 
         session['master_df'] = master_df.to_json()
         return redirect(url_for('upload_phish'))
-
     return render_template('index.html')
 
 @app.route('/upload_phish', methods=['GET', 'POST'])
 def upload_phish():
-    if 'master_df' not in session:
-        return redirect(url_for('index'))
-
     if request.method == 'POST':
+        if 'master_df' not in session:
+            return redirect(url_for('index'))
+
         master_df = pd.read_json(session['master_df'])
         phish_file = request.files['phish_file']
-        if not phish_file:
-            return "Phish file missing.", 400
-
         phish_df = parse_file(phish_file)
-        phish_df.columns = [c.strip() for c in phish_df.columns]
+        phish_df.columns = [str(c).strip() for c in phish_df.columns]
 
-        # Merge on OFFICE_EMAIL_ADDRESS
-        merged_df = phish_df.merge(master_df, on='OFFICE_EMAIL_ADDRESS', how='left')
+        # Use exact column names
+        email_col_master = 'OFFICE_EMAIL_ADDRESS'
+        email_col_phish = 'email'
 
-        # Columns to include in mapped data
-        final_columns = [
-            'EMPLOYEE_CODE',
-            'Name',
-            'OFFICE_EMAIL_ADDRESS',
-            'Status',
-            'L1 manager',
-            'L2 manager',
-            'SBU',
-            'DEPARTMENT',
-            'Zone',
-            'Location'
+        if email_col_master not in master_df.columns or email_col_phish not in phish_df.columns:
+            return "❌ Email column not found in one or both files.", 400
+
+        # Merge on email
+        merged_df = pd.merge(phish_df, master_df, left_on=email_col_phish, right_on=email_col_master, how='left')
+
+        # Columns to keep
+        required_cols = [
+            'EMPLOYEE_CODE', 
+            'Full Name', 
+            'OFFICE_EMAIL_ADDRESS', 
+            'status', 
+            'L1_MANAGER', 
+            'L2_MANAGER', 
+            'SBU', 
+            'DEPARTMENT', 
+            'ZONE', 
+            'LOCATION'
         ]
 
-        # Ensure all expected columns exist
-        for col in final_columns:
-            if col not in merged_df.columns:
-                merged_df[col] = pd.NA
+        # Filter merged columns
+        merged_df = merged_df[required_cols]
+        merged_df = merged_df.rename(columns={'Full Name': 'Name'})
 
-        # Reorder
-        mapped_df = merged_df[final_columns]
-
-        # Create summary count by Status
-        summary_df = phish_df['Status'].value_counts().reset_index()
+        # Create summary sheet
+        summary_df = phish_df['status'].value_counts().reset_index()
         summary_df.columns = ['Status', 'Count']
 
-        # Save in session
-        session['mapped_df'] = mapped_df.to_json()
+        # Store in session
+        session['merged_df'] = merged_df.to_json()
+        session['phish_df'] = phish_df.to_json()
         session['summary_df'] = summary_df.to_json()
-        session['raw_df'] = phish_df.to_json()
 
+        # Render table
         return render_template("summary.html",
-                               supporting_table_html=summary_df.to_html(index=False, classes="summary-table"),
-                               target='OFFICE_EMAIL_ADDRESS')
-
+                               summary_table_html=summary_df.to_html(index=False, classes="summary-table"))
     return render_template('upload_phish.html')
 
 @app.route('/download')
 def download():
     try:
-        mapped_df = pd.read_json(session['mapped_df'])
+        merged_df = pd.read_json(session['merged_df'])
+        phish_df = pd.read_json(session['phish_df'])
         summary_df = pd.read_json(session['summary_df'])
-        raw_df = pd.read_json(session['raw_df'])
 
         output = BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            summary_df.to_excel(writer, sheet_name="Status Count", index=False)
-            mapped_df.to_excel(writer, sheet_name="Mapped Data", index=False)
-            raw_df.to_excel(writer, sheet_name="Raw Data", index=False)
+            summary_df.to_excel(writer, index=False, sheet_name="Summary Stats")
+            merged_df.to_excel(writer, index=False, sheet_name="Mapped Data")
+            phish_df.to_excel(writer, index=False, sheet_name="Raw Phish Data")
         output.seek(0)
 
         return send_file(output,
