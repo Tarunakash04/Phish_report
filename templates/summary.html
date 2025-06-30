@@ -1,96 +1,46 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <title>Data Summary - {{ target }}</title>
+    <title>Phisherman — Summary</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
     <style>
-        body {
-            font-family: 'Segoe UI', sans-serif;
-            padding: 40px;
-            background-color: #f9f9f9;
-            color: #333;
-        }
-
-        h2, h3 {
-            color: #2c3e50;
-        }
-
-        .summary-block {
-            background-color: #ffffff;
-            border: 1px solid #ddd;
-            border-radius: 10px;
-            padding: 30px;
-            margin-bottom: 40px;
-            box-shadow: 0 4px 8px rgba(0,0,0,0.05);
-        }
-
         .summary-table {
-            width: 100%;
             border-collapse: collapse;
+            width: 100%;
             margin-top: 20px;
         }
-
         .summary-table th, .summary-table td {
-            padding: 12px;
-            border: 1px solid #ccc;
+            border: 1px solid #ddd;
+            padding: 8px;
+        }
+        .summary-table th {
+            background-color: #4a90e2;
+            color: white;
             text-align: center;
         }
-
-        .summary-table th {
-            background-color: #f2f2f2;
+        .button-group {
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            margin-top: 20px;
         }
-
-        pre {
-            white-space: pre-wrap;
-            word-break: break-word;
+        .button-group a {
+            flex: 1;
         }
-
-        .button-bar {
-            margin-top: 30px;
-        }
-
-        .button-bar a {
-            display: inline-block;
-            text-decoration: none;
-            background-color: #3498db;
-            color: white;
-            padding: 10px 20px;
-            margin-right: 15px;
-            border-radius: 6px;
-            transition: background-color 0.2s ease-in-out;
-        }
-
-        .button-bar a:hover {
-            background-color: #2d83c4;
+        .button-group button {
+            width: 100%;
         }
     </style>
 </head>
 <body>
-
-    <h2>Summary Report: Primary Column - <strong>{{ target }}</strong></h2>
-
-    {% if supporting_table_html %}
-        <div class="summary-block">
-            <h3>📊 Supporting Data Table</h3>
-            {{ supporting_table_html | safe }}
-        </div>
-    {% endif %}
-
-    {% if comparison_table_html %}
-        <div class="summary-block">
-            <h3>🧮 Comparison Across Files</h3>
-            {{ comparison_table_html | safe }}
-        </div>
-    {% endif %}
-
-    {% if not model_summary_text and not supporting_table_html %}
-        <p>No data was found to summarize. Please try uploading different files or column selections.</p>
-    {% endif %}
-
-    <div class="button-bar">
-        <a href="{{ url_for('index') }}">⬆️ Upload New Files</a>
-        <a href="{{ url_for('reset') }}">🔄 Reset Session</a>
-        <a href="{{ url_for('download') }}">⬇️ Download Excel Report</a>
+<div class="container">
+    <h1>Phisherman</h1>
+    <br>
+    {{ summary_table_html | safe }}
+    <div class="button-group">
+        <a href="{{ url_for('download') }}"><button>Download Full Report</button></a>
+        <a href="{{ url_for('reset') }}"><button>Start Over</button></a>
     </div>
+</div>
 </body>
 </html>
