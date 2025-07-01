@@ -32,23 +32,22 @@ def index():
         master_file = request.files['master_file']
         master_df = parse_file(master_file)
         master_df.columns = [str(c).strip() for c in master_df.columns]
-
         session['master_df'] = master_df.to_json()
+        session['phish_reports'] = []
         return redirect(url_for('upload_phish'))
     return render_template('index.html')
 
 @app.route('/upload_phish', methods=['GET', 'POST'])
 def upload_phish():
-    if request.method == 'POST':
-        if 'master_df' not in session:
-            return redirect(url_for('index'))
+    if 'master_df' not in session:
+        return redirect(url_for('index'))
 
+    if request.method == 'POST':
         master_df = pd.read_json(session['master_df'])
         phish_file = request.files['phish_file']
         phish_df = parse_file(phish_file)
         phish_df.columns = [str(c).strip() for c in phish_df.columns]
 
-        # Use exact column names
         email_col_master = 'OFFICE_EMAIL_ADDRESS'
         email_col_phish = 'email'
 
@@ -58,50 +57,89 @@ def upload_phish():
         # Merge on email
         merged_df = pd.merge(phish_df, master_df, left_on=email_col_phish, right_on=email_col_master, how='left')
 
-        # Columns to keep
-        required_cols = [
-            'EMPLOYEE_CODE', 
-            'Full Name', 
-            'OFFICE_EMAIL_ADDRESS', 
-            'status', 
-            'L1_MANAGER', 
-            'L2_MANAGER', 
-            'SBU', 
-            'DEPARTMENT', 
-            'ZONE', 
-            'LOCATION'
-        ]
+        # Identify unmatched
+        unmatched_df = merged_df[merged_df['EMPLOYEE_CODE'].isna()][[email_col_phish, 'status']]
 
-        # Filter merged columns
+        # Filter final columns
+        required_cols = ['EMPLOYEE_CODE', 'Full Name', 'OFFICE_EMAIL_ADDRESS', 'status', 
+                         'L1_MANAGER', 'L2_MANAGER', 'SBU', 'DEPARTMENT', 'ZONE', 'LOCATION']
         merged_df = merged_df[required_cols]
         merged_df = merged_df.rename(columns={'Full Name': 'Name'})
 
-        # Create summary sheet
-        summary_df = phish_df['status'].value_counts().reset_index()
-        summary_df.columns = ['Status', 'Count']
+        # Store this report
+        phish_reports = session.get('phish_reports', [])
+        phish_reports.append({
+            'phish_df': phish_df.to_json(),
+            'merged_df': merged_df.to_json(),
+            'unmatched_df': unmatched_df.to_json(),
+            'filename': phish_file.filename
+        })
+        session['phish_reports'] = phish_reports
 
-        # Store in session
-        session['merged_df'] = merged_df.to_json()
-        session['phish_df'] = phish_df.to_json()
-        session['summary_df'] = summary_df.to_json()
+        return redirect(url_for('summary'))
 
-        # Render table
-        return render_template("summary.html",
-                               summary_table_html=summary_df.to_html(index=False, classes="summary-table"))
     return render_template('upload_phish.html')
+
+@app.route('/summary')
+def summary():
+    if 'phish_reports' not in session or not session['phish_reports']:
+        return redirect(url_for('upload_phish'))
+
+    master_df = pd.read_json(session['master_df'])
+    phish_reports = session['phish_reports']
+
+    # Create consolidated employee report
+    all_status = []
+    for report in phish_reports:
+        phish_df = pd.read_json(report['phish_df'])
+        filename = report['filename']
+        # Try to get month from filename or use "Unknown"
+        month = pd.to_datetime(phish_df['send_date'].iloc[0], errors='coerce').strftime('%b') if 'send_date' in phish_df.columns else "Unknown"
+        phish_df = phish_df[[ 'email', 'status' ]].copy()
+        phish_df = phish_df.rename(columns={'status': month})
+        all_status.append(phish_df)
+
+    consolidated_df = master_df[['Full Name', 'OFFICE_EMAIL_ADDRESS']].rename(columns={'Full Name': 'Name', 'OFFICE_EMAIL_ADDRESS': 'email'})
+
+    for status_df in all_status:
+        consolidated_df = pd.merge(consolidated_df, status_df, on='email', how='left')
+
+    # Count "Clicked" or "Submitted Data"
+    status_cols = consolidated_df.columns[2:]
+    consolidated_df['Count'] = consolidated_df[status_cols].apply(lambda row: sum(row.fillna('').str.lower().isin(['clicked', 'submitted data'])), axis=1)
+
+    # Create summary of all statuses
+    all_status_concat = pd.concat([pd.read_json(r['phish_df'])['status'] for r in phish_reports], ignore_index=True)
+    summary_df = all_status_concat.value_counts().reset_index()
+    summary_df.columns = ['Status', 'Count']
+
+    session['consolidated_df'] = consolidated_df.to_json()
+    session['summary_df'] = summary_df.to_json()
+
+    return render_template("summary.html",
+                           summary_table_html=summary_df.to_html(index=False, classes="summary-table"))
 
 @app.route('/download')
 def download():
     try:
-        merged_df = pd.read_json(session['merged_df'])
-        phish_df = pd.read_json(session['phish_df'])
         summary_df = pd.read_json(session['summary_df'])
+        consolidated_df = pd.read_json(session['consolidated_df'])
+        phish_reports = session['phish_reports']
 
         output = BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
             summary_df.to_excel(writer, index=False, sheet_name="Summary Stats")
-            merged_df.to_excel(writer, index=False, sheet_name="Mapped Data")
-            phish_df.to_excel(writer, index=False, sheet_name="Raw Phish Data")
+            consolidated_df.to_excel(writer, index=False, sheet_name="Season Consolidation")
+
+            for i, report in enumerate(phish_reports, 1):
+                merged_df = pd.read_json(report['merged_df'])
+                unmatched_df = pd.read_json(report['unmatched_df'])
+                sheet_name = f"Mapped_{i}"
+                unmatched_sheet = f"Unmatched_{i}"
+
+                merged_df.to_excel(writer, index=False, sheet_name=sheet_name[:31])
+                unmatched_df.to_excel(writer, index=False, sheet_name=unmatched_sheet[:31])
+
         output.seek(0)
 
         return send_file(output,
