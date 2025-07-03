@@ -60,17 +60,20 @@ def upload_phish():
         # Identify unmatched
         unmatched_df = merged_df[merged_df['EMPLOYEE_CODE'].isna()][[email_col_phish, 'status']]
 
-        # Filter final columns
-        required_cols = ['EMPLOYEE_CODE', 'Full Name', 'OFFICE_EMAIL_ADDRESS', 'status', 
+        # Filter matched only
+        matched_df = merged_df[~merged_df['EMPLOYEE_CODE'].isna()].copy()
+
+        # Select final columns
+        required_cols = ['EMPLOYEE_CODE', 'Full Name', 'OFFICE_EMAIL_ADDRESS', 'status',
                          'L1_MANAGER', 'L2_MANAGER', 'SBU', 'DEPARTMENT', 'ZONE', 'LOCATION']
-        merged_df = merged_df[required_cols]
-        merged_df = merged_df.rename(columns={'Full Name': 'Name'})
+        matched_df = matched_df[required_cols]
+        matched_df = matched_df.rename(columns={'Full Name': 'Name'})
 
         # Store this report
         phish_reports = session.get('phish_reports', [])
         phish_reports.append({
             'phish_df': phish_df.to_json(),
-            'merged_df': merged_df.to_json(),
+            'merged_df': matched_df.to_json(),
             'unmatched_df': unmatched_df.to_json(),
             'filename': phish_file.filename
         })
@@ -88,14 +91,12 @@ def summary():
     master_df = pd.read_json(session['master_df'])
     phish_reports = session['phish_reports']
 
-    # Create consolidated employee report
     all_status = []
     for report in phish_reports:
         phish_df = pd.read_json(report['phish_df'])
         filename = report['filename']
-        # Try to get month from filename or use "Unknown"
         month = pd.to_datetime(phish_df['send_date'].iloc[0], errors='coerce').strftime('%b') if 'send_date' in phish_df.columns else "Unknown"
-        phish_df = phish_df[[ 'email', 'status' ]].copy()
+        phish_df = phish_df[['email', 'status']].copy()
         phish_df = phish_df.rename(columns={'status': month})
         all_status.append(phish_df)
 
@@ -104,11 +105,9 @@ def summary():
     for status_df in all_status:
         consolidated_df = pd.merge(consolidated_df, status_df, on='email', how='left')
 
-    # Count "Clicked" or "Submitted Data"
     status_cols = consolidated_df.columns[2:]
     consolidated_df['Count'] = consolidated_df[status_cols].apply(lambda row: sum(row.fillna('').str.lower().isin(['clicked', 'submitted data'])), axis=1)
 
-    # Create summary of all statuses
     all_status_concat = pd.concat([pd.read_json(r['phish_df'])['status'] for r in phish_reports], ignore_index=True)
     summary_df = all_status_concat.value_counts().reset_index()
     summary_df.columns = ['Status', 'Count']
