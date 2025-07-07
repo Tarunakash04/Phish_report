@@ -44,40 +44,39 @@ def upload_phish():
 
     if request.method == 'POST':
         master_df = pd.read_json(session['master_df'])
-        phish_file = request.files['phish_file']
-        phish_df = parse_file(phish_file)
-        phish_df.columns = [str(c).strip() for c in phish_df.columns]
+        uploaded_files = request.files.getlist('phish_file')
 
-        email_col_master = 'OFFICE_EMAIL_ADDRESS'
-        email_col_phish = 'email'
+        for phish_file in uploaded_files:
+            phish_df = parse_file(phish_file)
+            phish_df.columns = [str(c).strip() for c in phish_df.columns]
 
-        if email_col_master not in master_df.columns or email_col_phish not in phish_df.columns:
-            return "❌ Email column not found in one or both files.", 400
+            email_col_master = 'OFFICE_EMAIL_ADDRESS'
+            email_col_phish = 'email'
 
-        # Merge on email
-        merged_df = pd.merge(phish_df, master_df, left_on=email_col_phish, right_on=email_col_master, how='left')
+            if email_col_master not in master_df.columns or email_col_phish not in phish_df.columns:
+                return "❌ Email column not found in one or both files.", 400
 
-        # Unmatched data
-        unmatched_df = merged_df[merged_df['EMPLOYEE_CODE'].isna()][[email_col_phish, 'status']]
+            # Merge on email
+            merged_df = pd.merge(phish_df, master_df, left_on=email_col_phish, right_on=email_col_master, how='left', indicator=True)
 
-        # Remove unmatched rows from mapped_df
-        mapped_df = merged_df[~merged_df['EMPLOYEE_CODE'].isna()].copy()
+            # Identify unmatched
+            unmatched_df = merged_df[merged_df['_merge'] == 'left_only'][[email_col_phish, 'status']]
+            matched_df = merged_df[merged_df['_merge'] == 'both']
 
-        # Filter final columns
-        required_cols = ['EMPLOYEE_CODE', 'Full Name', 'OFFICE_EMAIL_ADDRESS', 'status', 
-                         'L1_MANAGER', 'L2_MANAGER', 'SBU', 'DEPARTMENT', 'ZONE', 'LOCATION']
-        mapped_df = mapped_df[required_cols]
-        mapped_df = mapped_df.rename(columns={'Full Name': 'Name'})
+            # Filter final columns for mapped data
+            required_cols = ['EMPLOYEE_CODE', 'Full Name', 'OFFICE_EMAIL_ADDRESS', 'status',
+                             'L1_MANAGER', 'L2_MANAGER', 'SBU', 'DEPARTMENT', 'ZONE', 'LOCATION']
+            final_mapped_df = matched_df[required_cols].rename(columns={'Full Name': 'Name'})
 
-        # Store this report
-        phish_reports = session.get('phish_reports', [])
-        phish_reports.append({
-            'phish_df': phish_df.to_json(),
-            'mapped_df': mapped_df.to_json(),
-            'unmatched_df': unmatched_df.to_json(),
-            'filename': phish_file.filename
-        })
-        session['phish_reports'] = phish_reports
+            # Save report info
+            phish_reports = session.get('phish_reports', [])
+            phish_reports.append({
+                'phish_df': phish_df.to_json(),
+                'merged_df': final_mapped_df.to_json(),
+                'unmatched_df': unmatched_df.to_json(),
+                'filename': phish_file.filename
+            })
+            session['phish_reports'] = phish_reports
 
         return redirect(url_for('summary'))
 
@@ -91,32 +90,29 @@ def summary():
     master_df = pd.read_json(session['master_df'])
     phish_reports = session['phish_reports']
 
-    # Create consolidated employee report
-    all_status = []
-    month_names = []
+    # Prepare consolidated employee report
+    consolidated_df = master_df[['Full Name', 'OFFICE_EMAIL_ADDRESS']].rename(columns={'Full Name': 'Name', 'OFFICE_EMAIL_ADDRESS': 'email'})
 
+    all_status = []
     for report in phish_reports:
         phish_df = pd.read_json(report['phish_df'])
-        if 'send_date' in phish_df.columns and not phish_df['send_date'].isnull().all():
-            month = pd.to_datetime(phish_df['send_date'].iloc[0], errors='coerce').strftime('%b')
-        else:
-            month = "Unknown"
-        month_names.append(month)
-
-        status_df = phish_df[[ 'email', 'status' ]].copy()
+        month = "Unknown"
+        if 'send_date' in phish_df.columns:
+            first_date = pd.to_datetime(phish_df['send_date'].iloc[0], errors='coerce')
+            if not pd.isna(first_date):
+                month = first_date.strftime('%b')
+        status_df = phish_df[['email', 'status']].copy()
         status_df = status_df.rename(columns={'status': month})
         all_status.append(status_df)
-
-    consolidated_df = master_df[['Full Name', 'OFFICE_EMAIL_ADDRESS']].rename(columns={'Full Name': 'Name', 'OFFICE_EMAIL_ADDRESS': 'email'})
 
     for status_df in all_status:
         consolidated_df = pd.merge(consolidated_df, status_df, on='email', how='left')
 
-    # Count clicked/submitted
+    # Count clicks or submissions
     status_cols = consolidated_df.columns[2:]
     consolidated_df['Count'] = consolidated_df[status_cols].apply(lambda row: sum(row.fillna('').str.lower().isin(['clicked', 'submitted data'])), axis=1)
 
-    # Create overall summary
+    # Create global summary stats
     all_status_concat = pd.concat([pd.read_json(r['phish_df'])['status'] for r in phish_reports], ignore_index=True)
     summary_df = all_status_concat.value_counts().reset_index()
     summary_df.columns = ['Status', 'Count']
@@ -140,12 +136,12 @@ def download():
             consolidated_df.to_excel(writer, index=False, sheet_name="Season Consolidation")
 
             for i, report in enumerate(phish_reports, 1):
-                mapped_df = pd.read_json(report['mapped_df'])
+                merged_df = pd.read_json(report['merged_df'])
                 unmatched_df = pd.read_json(report['unmatched_df'])
                 sheet_name = f"Mapped_{i}"
                 unmatched_sheet = f"Unmatched_{i}"
 
-                mapped_df.to_excel(writer, index=False, sheet_name=sheet_name[:31])
+                merged_df.to_excel(writer, index=False, sheet_name=sheet_name[:31])
                 unmatched_df.to_excel(writer, index=False, sheet_name=unmatched_sheet[:31])
 
         output.seek(0)
