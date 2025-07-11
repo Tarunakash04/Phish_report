@@ -4,7 +4,6 @@ import os
 from io import BytesIO
 from werkzeug.utils import secure_filename
 from flask_session import Session
-from collections import Counter
 
 app = Flask(__name__)
 app.secret_key = 'phishsecret'
@@ -92,18 +91,20 @@ def summary():
     all_status = []
     for report in phish_reports:
         phish_df = pd.read_json(report['phish_df'])
-        month_name = "Unknown"
+        month_base = "Unknown"
 
         if 'send_date' in phish_df.columns:
-            # Parse all valid months
-            months = pd.to_datetime(phish_df['send_date'], errors='coerce').dt.month.dropna().astype(int)
-            if not months.empty:
-                most_common_month_num = Counter(months).most_common(1)[0][0]
-                month_name = pd.to_datetime(f'2024-{most_common_month_num:02d}-01').strftime('%b')
+            dates = pd.to_datetime(phish_df['send_date'], errors='coerce')
+            valid_dates = dates.dropna()
 
-        # Just use month_name directly, no "_1" or "_2"
+            if not valid_dates.empty:
+                common_month_number = valid_dates.dt.month.value_counts().idxmax()
+                month_base = pd.to_datetime(str(common_month_number), format='%m').strftime('%b')
+
+        month = month_base  # ← Only plain month name, no suffix
+
         status_df = phish_df[['email', 'status']].copy()
-        status_df = status_df.rename(columns={'status': month_name})
+        status_df = status_df.rename(columns={'status': month})
         all_status.append(status_df)
 
     for status_df in all_status:
