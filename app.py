@@ -56,19 +56,15 @@ def upload_phish():
             if email_col_master not in master_df.columns or email_col_phish not in phish_df.columns:
                 return "❌ Email column not found in one or both files.", 400
 
-            # Merge on email
             merged_df = pd.merge(phish_df, master_df, left_on=email_col_phish, right_on=email_col_master, how='left', indicator=True)
 
-            # Identify unmatched
             unmatched_df = merged_df[merged_df['_merge'] == 'left_only'][[email_col_phish, 'status']]
             matched_df = merged_df[merged_df['_merge'] == 'both']
 
-            # Filter final columns for mapped data
             required_cols = ['EMPLOYEE_CODE', 'Full Name', 'OFFICE_EMAIL_ADDRESS', 'status',
                              'L1_MANAGER', 'L2_MANAGER', 'SBU', 'DEPARTMENT', 'ZONE', 'LOCATION']
             final_mapped_df = matched_df[required_cols].rename(columns={'Full Name': 'Name'})
 
-            # Save report info
             phish_reports = session.get('phish_reports', [])
             phish_reports.append({
                 'phish_df': phish_df.to_json(),
@@ -90,17 +86,21 @@ def summary():
     master_df = pd.read_json(session['master_df'])
     phish_reports = session['phish_reports']
 
-    # Prepare consolidated employee report
     consolidated_df = master_df[['Full Name', 'OFFICE_EMAIL_ADDRESS']].rename(columns={'Full Name': 'Name', 'OFFICE_EMAIL_ADDRESS': 'email'})
 
     all_status = []
-    for report in phish_reports:
+    for i, report in enumerate(phish_reports):
         phish_df = pd.read_json(report['phish_df'])
-        month = "Unknown"
-        if 'send_date' in phish_df.columns:
-            first_date = pd.to_datetime(phish_df['send_date'].iloc[0], errors='coerce')
-            if not pd.isna(first_date):
-                month = first_date.strftime('%b')
+        month_base = "Unknown"
+
+        if 'send_date' in phish_df.columns and not phish_df['send_date'].isna().all():
+            # Parse first non-null date from phish report
+            valid_dates = pd.to_datetime(phish_df['send_date'], errors='coerce').dropna()
+            if not valid_dates.empty:
+                month_base = valid_dates.iloc[0].strftime('%b')  # Example: 'May'
+
+        month = f"{month_base}_{i+1}"  # Ensure uniqueness
+
         status_df = phish_df[['email', 'status']].copy()
         status_df = status_df.rename(columns={'status': month})
         all_status.append(status_df)
@@ -108,11 +108,10 @@ def summary():
     for status_df in all_status:
         consolidated_df = pd.merge(consolidated_df, status_df, on='email', how='left')
 
-    # Count clicks or submissions
     status_cols = consolidated_df.columns[2:]
     consolidated_df['Count'] = consolidated_df[status_cols].apply(lambda row: sum(row.fillna('').str.lower().isin(['clicked', 'submitted data'])), axis=1)
 
-    # Create global summary stats
+    # Create summary stats only from phish report statuses
     all_status_concat = pd.concat([pd.read_json(r['phish_df'])['status'] for r in phish_reports], ignore_index=True)
     summary_df = all_status_concat.value_counts().reset_index()
     summary_df.columns = ['Status', 'Count']
@@ -145,7 +144,6 @@ def download():
                 unmatched_df.to_excel(writer, index=False, sheet_name=unmatched_sheet[:31])
 
         output.seek(0)
-
         return send_file(output,
                          download_name="Phisherman_Report.xlsx",
                          as_attachment=True,
