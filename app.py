@@ -4,6 +4,7 @@ import os
 from io import BytesIO
 from werkzeug.utils import secure_filename
 from flask_session import Session
+from collections import Counter
 
 app = Flask(__name__)
 app.secret_key = 'phishsecret'
@@ -93,13 +94,15 @@ def summary():
         phish_df = pd.read_json(report['phish_df'])
         month_base = "Unknown"
 
-        if 'send_date' in phish_df.columns and not phish_df['send_date'].isna().all():
-            # Parse first non-null date from phish report
-            valid_dates = pd.to_datetime(phish_df['send_date'], errors='coerce').dropna()
-            if not valid_dates.empty:
-                month_base = valid_dates.iloc[0].strftime('%b')  # Example: 'May'
+        if 'send_date' in phish_df.columns:
+            # Extract month numbers from all dates
+            months = pd.to_datetime(phish_df['send_date'], errors='coerce').dt.month.dropna().astype(int)
+            if not months.empty:
+                # Pick the most common month number
+                most_common_month_num = Counter(months).most_common(1)[0][0]
+                month_base = pd.to_datetime(f'2024-{most_common_month_num:02d}-01').strftime('%b')
 
-        month = f"{month_base}_{i+1}"  # Ensure uniqueness
+        month = f"{month_base}_{i+1}"
 
         status_df = phish_df[['email', 'status']].copy()
         status_df = status_df.rename(columns={'status': month})
@@ -111,7 +114,6 @@ def summary():
     status_cols = consolidated_df.columns[2:]
     consolidated_df['Count'] = consolidated_df[status_cols].apply(lambda row: sum(row.fillna('').str.lower().isin(['clicked', 'submitted data'])), axis=1)
 
-    # Create summary stats only from phish report statuses
     all_status_concat = pd.concat([pd.read_json(r['phish_df'])['status'] for r in phish_reports], ignore_index=True)
     summary_df = all_status_concat.value_counts().reset_index()
     summary_df.columns = ['Status', 'Count']
@@ -144,6 +146,7 @@ def download():
                 unmatched_df.to_excel(writer, index=False, sheet_name=unmatched_sheet[:31])
 
         output.seek(0)
+
         return send_file(output,
                          download_name="Phisherman_Report.xlsx",
                          as_attachment=True,
