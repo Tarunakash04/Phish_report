@@ -90,22 +90,20 @@ def summary():
     consolidated_df = master_df[['Full Name', 'OFFICE_EMAIL_ADDRESS']].rename(columns={'Full Name': 'Name', 'OFFICE_EMAIL_ADDRESS': 'email'})
 
     all_status = []
-    for i, report in enumerate(phish_reports):
+    for report in phish_reports:
         phish_df = pd.read_json(report['phish_df'])
-        month_base = "Unknown"
+        month_name = "Unknown"
 
         if 'send_date' in phish_df.columns:
-            # Extract month numbers from all dates
+            # Parse all valid months
             months = pd.to_datetime(phish_df['send_date'], errors='coerce').dt.month.dropna().astype(int)
             if not months.empty:
-                # Pick the most common month number
                 most_common_month_num = Counter(months).most_common(1)[0][0]
-                month_base = pd.to_datetime(f'2024-{most_common_month_num:02d}-01').strftime('%b')
+                month_name = pd.to_datetime(f'2024-{most_common_month_num:02d}-01').strftime('%b')
 
-        month = f"{month_base}_{i+1}"
-
+        # Just use month_name directly, no "_1" or "_2"
         status_df = phish_df[['email', 'status']].copy()
-        status_df = status_df.rename(columns={'status': month})
+        status_df = status_df.rename(columns={'status': month_name})
         all_status.append(status_df)
 
     for status_df in all_status:
