@@ -46,13 +46,29 @@ def upload_phish():
     if request.method == 'POST':
         master_df = pd.read_json(StringIO(session['master_df']))
         uploaded_files = request.files.getlist('phish_file')
-
         phish_reports = []
 
         for phish_file in uploaded_files:
             phish_df = parse_file(phish_file)
             phish_df.columns = [str(c).strip() for c in phish_df.columns]
-            phish_reports.append(phish_df.to_json())
+
+            # Determine month from send_date
+            if 'send_date' in phish_df.columns:
+                month_numbers = pd.to_datetime(phish_df['send_date'], errors='coerce').dt.month.dropna()
+                month_counter = Counter(month_numbers)
+                if not month_counter:
+                    month_name = "Unknown"
+                else:
+                    most_common_month_num = month_counter.most_common(1)[0][0]
+                    month_name = pd.Timestamp(month=most_common_month_num, day=1, year=2025).strftime('%b')
+            else:
+                month_name = "Unknown"
+
+            # Store phish data with month info
+            phish_reports.append({
+                'phish_df': phish_df.to_json(),
+                'month': month_name
+            })
 
         session['phish_reports'] = phish_reports
         return redirect(url_for('summary'))
@@ -67,61 +83,59 @@ def summary():
     master_df = pd.read_json(StringIO(session['master_df']))
     phish_reports = session['phish_reports']
 
-    consolidated_df = master_df[['EMPLOYEE_CODE', 'Full Name', 'OFFICE_EMAIL_ADDRESS',
-                                 'L1_MANAGER', 'L2_MANAGER', 'SBU', 'DEPARTMENT', 'ZONE', 'LOCATION']]
+    # Prepare consolidated base
+    consolidated_df = master_df[['EMPLOYEE_CODE', 'Full Name', 'OFFICE_EMAIL_ADDRESS', 
+                                 'L1_MANAGER', 'L2_MANAGER', 'SBU', 'DEPARTMENT', 'ZONE', 'LOCATION']].copy()
     consolidated_df = consolidated_df.rename(columns={'Full Name': 'Name', 'OFFICE_EMAIL_ADDRESS': 'email'})
 
-    all_status_dfs = []
-    month_status_map = {}
+    month_status_dfs = {}
 
-    for report_json in phish_reports:
-        phish_df = pd.read_json(StringIO(report_json))
-        phish_df.columns = [str(c).strip() for c in phish_df.columns]
+    for report in phish_reports:
+        phish_df = pd.read_json(StringIO(report['phish_df']))
+        month = report['month']
 
-        if 'send_date' in phish_df.columns:
-            dates = pd.to_datetime(phish_df['send_date'], errors='coerce')
-        elif 'modified_date' in phish_df.columns:
-            dates = pd.to_datetime(phish_df['modified_date'], errors='coerce')
+        # Only keep 'email' and 'status'
+        status_df = phish_df[['email', 'status']].copy()
+
+        # If month already exists, append; else add new
+        if month in month_status_dfs:
+            month_status_dfs[month] = pd.concat([month_status_dfs[month], status_df])
         else:
-            continue
+            month_status_dfs[month] = status_df
 
-        months = dates.dt.month.dropna()
-        if not months.empty:
-            most_common_month = Counter(months).most_common(1)[0][0]
-            month_name = pd.to_datetime(f"2023-{most_common_month:02d}-01").strftime('%b')
-            month_status_map[month_name] = phish_df[['email', 'status']].rename(columns={'status': month_name})
-    
-    # Deduplicate months, only one column per month
-    for month, df_status in month_status_map.items():
-        all_status_dfs.append(df_status)
+    # Collapse each month's data to one row per email (take latest status if duplicates)
+    for month, df in month_status_dfs.items():
+        df = df.drop_duplicates(subset=['email'], keep='last')
+        df = df.rename(columns={'status': month})
+        consolidated_df = pd.merge(consolidated_df, df, on='email', how='left')
 
-    for status_df in all_status_dfs:
-        consolidated_df = pd.merge(consolidated_df, status_df, on='email', how='left')
-
-    # Count clicks or submissions
-    status_cols = consolidated_df.columns[10:]  # from first month column onward
+    # Compute final count
+    status_cols = [col for col in consolidated_df.columns if col not in ['EMPLOYEE_CODE', 'Name', 'email', 
+                                                                          'L1_MANAGER', 'L2_MANAGER', 'SBU', 
+                                                                          'DEPARTMENT', 'ZONE', 'LOCATION']]
     consolidated_df['Count'] = consolidated_df[status_cols].apply(
-        lambda row: sum(row.fillna('').str.lower().isin(['clicked', 'submitted data'])),
+        lambda row: sum(str(val).strip().lower() in ['clicked', 'submitted data'] for val in row),
         axis=1
     )
 
-    # Global summary count
-    all_status_values = []
-    for df in all_status_dfs:
-        all_status_values.extend(df.iloc[:, 1].dropna().tolist())
+    # Create summary count sheet
+    all_status = []
+    for month, df in month_status_dfs.items():
+        all_status.extend(df['status'].dropna().str.strip().str.title())
 
-    summary_df = pd.Series(all_status_values).value_counts().reset_index()
+    summary_df = pd.Series(all_status).value_counts().reset_index()
     summary_df.columns = ['Status', 'Count']
 
-    # Prepare unmapped data
-    all_uploaded_emails = set()
-    for df in all_status_dfs:
-        all_uploaded_emails.update(df['email'].dropna().unique())
-    mapped_emails = set(consolidated_df['email'].dropna().unique())
-    unmapped_emails = all_uploaded_emails - mapped_emails
-    unmapped_df = pd.DataFrame({'email': list(unmapped_emails)})
+    # Prepare unmapped
+    all_emails = set(consolidated_df['email'].dropna().str.lower())
+    unmapped_emails = set()
+    for df in month_status_dfs.values():
+        df_emails = set(df['email'].dropna().str.lower())
+        unmapped_emails.update(df_emails - all_emails)
 
-    # Save
+    # Create unmapped DataFrame
+    unmapped_df = pd.DataFrame(list(unmapped_emails), columns=['email'])
+
     session['consolidated_df'] = consolidated_df.to_json()
     session['summary_df'] = summary_df.to_json()
     session['unmapped_df'] = unmapped_df.to_json()
