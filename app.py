@@ -1,9 +1,10 @@
 from flask import Flask, render_template, request, redirect, url_for, send_file, session
 import pandas as pd
 import os
-from io import BytesIO
+from io import BytesIO, StringIO
 from werkzeug.utils import secure_filename
 from flask_session import Session
+from collections import Counter
 
 app = Flask(__name__)
 app.secret_key = 'phishsecret'
@@ -43,37 +44,17 @@ def upload_phish():
         return redirect(url_for('index'))
 
     if request.method == 'POST':
-        master_df = pd.read_json(session['master_df'])
+        master_df = pd.read_json(StringIO(session['master_df']))
         uploaded_files = request.files.getlist('phish_file')
+
+        phish_reports = []
 
         for phish_file in uploaded_files:
             phish_df = parse_file(phish_file)
             phish_df.columns = [str(c).strip() for c in phish_df.columns]
+            phish_reports.append(phish_df.to_json())
 
-            email_col_master = 'OFFICE_EMAIL_ADDRESS'
-            email_col_phish = 'email'
-
-            if email_col_master not in master_df.columns or email_col_phish not in phish_df.columns:
-                return "❌ Email column not found in one or both files.", 400
-
-            merged_df = pd.merge(phish_df, master_df, left_on=email_col_phish, right_on=email_col_master, how='left', indicator=True)
-
-            unmatched_df = merged_df[merged_df['_merge'] == 'left_only'][[email_col_phish, 'status']]
-            matched_df = merged_df[merged_df['_merge'] == 'both']
-
-            required_cols = ['EMPLOYEE_CODE', 'Full Name', 'OFFICE_EMAIL_ADDRESS', 'status',
-                             'L1_MANAGER', 'L2_MANAGER', 'SBU', 'DEPARTMENT', 'ZONE', 'LOCATION']
-            final_mapped_df = matched_df[required_cols].rename(columns={'Full Name': 'Name'})
-
-            phish_reports = session.get('phish_reports', [])
-            phish_reports.append({
-                'phish_df': phish_df.to_json(),
-                'merged_df': final_mapped_df.to_json(),
-                'unmatched_df': unmatched_df.to_json(),
-                'filename': phish_file.filename
-            })
-            session['phish_reports'] = phish_reports
-
+        session['phish_reports'] = phish_reports
         return redirect(url_for('summary'))
 
     return render_template('upload_phish.html')
@@ -83,42 +64,67 @@ def summary():
     if 'phish_reports' not in session or not session['phish_reports']:
         return redirect(url_for('upload_phish'))
 
-    master_df = pd.read_json(session['master_df'])
+    master_df = pd.read_json(StringIO(session['master_df']))
     phish_reports = session['phish_reports']
 
-    consolidated_df = master_df[['Full Name', 'OFFICE_EMAIL_ADDRESS']].rename(columns={'Full Name': 'Name', 'OFFICE_EMAIL_ADDRESS': 'email'})
+    consolidated_df = master_df[['EMPLOYEE_CODE', 'Full Name', 'OFFICE_EMAIL_ADDRESS',
+                                 'L1_MANAGER', 'L2_MANAGER', 'SBU', 'DEPARTMENT', 'ZONE', 'LOCATION']]
+    consolidated_df = consolidated_df.rename(columns={'Full Name': 'Name', 'OFFICE_EMAIL_ADDRESS': 'email'})
 
-    all_status = []
-    for report in phish_reports:
-        phish_df = pd.read_json(report['phish_df'])
-        month_base = "Unknown"
+    all_status_dfs = []
+    month_status_map = {}
+
+    for report_json in phish_reports:
+        phish_df = pd.read_json(StringIO(report_json))
+        phish_df.columns = [str(c).strip() for c in phish_df.columns]
 
         if 'send_date' in phish_df.columns:
             dates = pd.to_datetime(phish_df['send_date'], errors='coerce')
-            valid_dates = dates.dropna()
+        elif 'modified_date' in phish_df.columns:
+            dates = pd.to_datetime(phish_df['modified_date'], errors='coerce')
+        else:
+            continue
 
-            if not valid_dates.empty:
-                common_month_number = valid_dates.dt.month.value_counts().idxmax()
-                month_base = pd.to_datetime(str(common_month_number), format='%m').strftime('%b')
+        months = dates.dt.month.dropna()
+        if not months.empty:
+            most_common_month = Counter(months).most_common(1)[0][0]
+            month_name = pd.to_datetime(f"2023-{most_common_month:02d}-01").strftime('%b')
+            month_status_map[month_name] = phish_df[['email', 'status']].rename(columns={'status': month_name})
+    
+    # Deduplicate months, only one column per month
+    for month, df_status in month_status_map.items():
+        all_status_dfs.append(df_status)
 
-        month = month_base  # ← Only plain month name, no suffix
-
-        status_df = phish_df[['email', 'status']].copy()
-        status_df = status_df.rename(columns={'status': month})
-        all_status.append(status_df)
-
-    for status_df in all_status:
+    for status_df in all_status_dfs:
         consolidated_df = pd.merge(consolidated_df, status_df, on='email', how='left')
 
-    status_cols = consolidated_df.columns[2:]
-    consolidated_df['Count'] = consolidated_df[status_cols].apply(lambda row: sum(row.fillna('').str.lower().isin(['clicked', 'submitted data'])), axis=1)
+    # Count clicks or submissions
+    status_cols = consolidated_df.columns[10:]  # from first month column onward
+    consolidated_df['Count'] = consolidated_df[status_cols].apply(
+        lambda row: sum(row.fillna('').str.lower().isin(['clicked', 'submitted data'])),
+        axis=1
+    )
 
-    all_status_concat = pd.concat([pd.read_json(r['phish_df'])['status'] for r in phish_reports], ignore_index=True)
-    summary_df = all_status_concat.value_counts().reset_index()
+    # Global summary count
+    all_status_values = []
+    for df in all_status_dfs:
+        all_status_values.extend(df.iloc[:, 1].dropna().tolist())
+
+    summary_df = pd.Series(all_status_values).value_counts().reset_index()
     summary_df.columns = ['Status', 'Count']
 
+    # Prepare unmapped data
+    all_uploaded_emails = set()
+    for df in all_status_dfs:
+        all_uploaded_emails.update(df['email'].dropna().unique())
+    mapped_emails = set(consolidated_df['email'].dropna().unique())
+    unmapped_emails = all_uploaded_emails - mapped_emails
+    unmapped_df = pd.DataFrame({'email': list(unmapped_emails)})
+
+    # Save
     session['consolidated_df'] = consolidated_df.to_json()
     session['summary_df'] = summary_df.to_json()
+    session['unmapped_df'] = unmapped_df.to_json()
 
     return render_template("summary.html",
                            summary_table_html=summary_df.to_html(index=False, classes="summary-table"))
@@ -126,23 +132,15 @@ def summary():
 @app.route('/download')
 def download():
     try:
-        summary_df = pd.read_json(session['summary_df'])
-        consolidated_df = pd.read_json(session['consolidated_df'])
-        phish_reports = session['phish_reports']
+        summary_df = pd.read_json(StringIO(session['summary_df']))
+        consolidated_df = pd.read_json(StringIO(session['consolidated_df']))
+        unmapped_df = pd.read_json(StringIO(session['unmapped_df']))
 
         output = BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
             summary_df.to_excel(writer, index=False, sheet_name="Summary Stats")
-            consolidated_df.to_excel(writer, index=False, sheet_name="Season Consolidation")
-
-            for i, report in enumerate(phish_reports, 1):
-                merged_df = pd.read_json(report['merged_df'])
-                unmatched_df = pd.read_json(report['unmatched_df'])
-                sheet_name = f"Mapped_{i}"
-                unmatched_sheet = f"Unmatched_{i}"
-
-                merged_df.to_excel(writer, index=False, sheet_name=sheet_name[:31])
-                unmatched_df.to_excel(writer, index=False, sheet_name=unmatched_sheet[:31])
+            consolidated_df.to_excel(writer, index=False, sheet_name="Mapped Data")
+            unmapped_df.to_excel(writer, index=False, sheet_name="Unmapped Data")
 
         output.seek(0)
 
